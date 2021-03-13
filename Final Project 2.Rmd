@@ -1,0 +1,167 @@
+---
+title: "Final Project"
+author: "Kevin Chen"
+date: "8/10/2020"
+output: html_document
+---
+
+---
+title: "final project"
+author: "Kevin Chen"
+date: "8/8/2020"
+output: html_document
+---
+
+
+
+
+import data and remove the first 4 columns
+```{r}
+library(edgeR)
+library(gplots)
+gse<-read.table("/Users/kevinchen/Documents/MS Bioinformatic program courses and supplement courses/summer 2020/Gene Expression Data Analysis and Visualization/FInal Project/GSE83931/GSE83931_Counts_and_FPKM.txt",header=T,sep="\t")
+ann<-read.table("/Users/kevinchen/Documents/MS Bioinformatic program courses and supplement courses/summer 2020/Gene Expression Data Analysis and Visualization/FInal Project/GSE83931/annotation.txt",header=T,sep="\t")
+fpkm<-gse[,-1:-3]
+row.names(fpkm)<-gse$Gene.ID
+colnames(fpkm)<-substr(colnames(fpkm),2,6)
+rownames(ann)<-ann$Sample.Name
+ann<-ann[colnames(fpkm),]
+group<-as.numeric(ann$Sex=="Female")
+wh<-apply(fpkm,2,function(x) which(is.na(x)))
+fpkm<-fpkm[which(!rownames(fpkm) %in% rownames(wh)),]
+dge.o<-DGEList(counts=fpkm,samples=ann,group=group)
+```
+
+Look for outliers 
+
+```{r}
+fpkm.cor <- cor(dge.o$counts)
+layout(matrix(c(1,1,1,1,1,1,1,1,2,2), 5, 2, byrow = TRUE))
+par(oma=c(5,7,1,1))
+cx <- rev(colorpanel(25,"yellow","black","blue"))
+leg <- seq(min(fpkm.cor,na.rm=T),max(fpkm.cor,na.rm=T),length=10) 
+image(fpkm.cor,main="Correlation plot Normal/Tumor fpkma",axes=F,col=cx)
+
+axis(1,at=seq(0,1,length=ncol(fpkm.cor)),label=dimnames(fpkm.cor)[[2]],cex.axis=0.9,las=2)
+
+axis(2,at=seq(0,1,length=ncol(fpkm.cor)),label=dimnames(fpkm.cor)[[2]],cex.axis=0.9,las=2)
+par(mar=c(1,1,1,1))
+image(as.matrix(leg),col=cx,axes=F)
+tmp <- round(leg,2) 
+axis(1,at=seq(0,1,length=length(leg)),labels=tmp,cex.axis=1)
+```
+```{r}
+dat <- t(dge.o$counts) #transpose fpkm 
+fpkm.dist <- dist(dat,method="euclidean") 
+fpkm.clust <- hclust(fpkm.dist,method="single") 
+plot(fpkm.clust,labels=names(dge.o$counts),cex=0.75)
+```
+
+
+```{r}
+fpkm.mean <- apply(log2(dge.o$counts+1),2,mean) 
+fpkm.sd <- sqrt(apply(log2(dge.o$counts+1),2,var)) 
+fpkm.cv <- fpkm.sd/fpkm.mean
+plot(fpkm.mean,fpkm.cv,main="cRCC fpkmaset \nCV vs Mean",xlab="Mean",ylab="CV",col='blue',cex=1.5,type="n") 
+points(fpkm.mean,fpkm.cv,bg="lightblue",col=1,pch=21)
+text(fpkm.mean,fpkm.cv,label=dimnames(dge.o$counts)[[2]],pos=1,cex=0.5)
+```
+
+
+```{r}
+fpkm.avg <- apply(fpkm.cor,1,mean)
+par(oma=c(3,0.1,0.1,0.1))
+plot(c(1,length(fpkm.avg)),range(fpkm.avg),type="n",xlab="",ylab="Avg r",main="Avg correlation of Tumor/Normal samples",axes=F) 
+points(fpkm.avg,bg="red",col=1,pch=21,cex=1.25)
+
+axis(1,at=c(1:length(fpkm.avg)),labels=dimnames(dge.o$counts)[[2]],las=2,cex.lab=0.4,cex.axis=0.6)
+axis(2)
+abline(v=seq(0.5,62.5,1),col="grey")
+```
+
+remove outlier
+```{r}
+dge.o<-dge.o[,which(!dge.o$samples$Sample.Name %in% c("1052O","1053D")),keep.lib.sizes = TRUE]
+```
+
+filter out lowly expressed genes
+```{r}
+keep<-filterByExpr(dge.o$counts, min.count=2,group=dge.o$samples$group)
+dge.o<-dge.o[keep,,keep.lib.sizes = F]
+```
+
+```{r}
+
+log2.fpkm<-log2(dge.o$counts+1)
+boxplot(log2.fpkm)
+
+```
+
+
+```{r}
+log2.fpkm<-log2(dge.o$counts+1)
+tmp<-t(log2.fpkm)
+tmp<-t(scale(tmp,center=T))
+pca.o<-prcomp(t(tmp))
+dat.loadings<-pca.o$x[,1:2]
+plot(dat.loadings[,1],dat.loadings[,2],xlab="pc1",ylab="pc2",col=dge.o$samples$group)
+```
+
+
+```{r}
+t.test.all.genes <- function(x,s1,s2) { 
+x1 <- x[s1]
+x2 <- x[s2]
+x1 <- as.numeric(x1)
+x2 <- as.numeric(x2)
+t.out <- t.test(x1,x2, alternative="two.sided",var.equal=T) 
+out <- as.numeric(t.out$p.value)
+return(out)
+}
+# s1
+# run function on each gene in the fpkma frame
+rawp <- apply(log2.fpkm,1,t.test.all.genes,s1=dge.o$samples$group==0,s2=dge.o$samples$group==1)
+```
+
+```{r}
+fdr.pv<-p.adjust(rawp,method="fdr")
+#holm.pv<-p.adjust(rawp,method="holm")
+```
+
+```{r}
+rawp.sorted<-sort(rawp)
+fdr.pv.sorted<-sort(fdr.pv)
+#holm.pv.sorted<-sort(holm.pv)
+
+plot(x=range(1,length(rawp.sorted)),y=range(rawp.sorted,fdr.pv.sorted),type="n",main="sorted p-values vs number of genes")
+lines(x=1:length(rawp.sorted),y=rawp.sorted,lwd=1,col="red")
+lines(x=1:length(fdr.pv.sorted),y=fdr.pv.sorted,lwd=1,col="blue")
+legend("topleft",legend=c("raw p values","fdr adjusted p values"),col=c("red","blue"),lwd=1)
+```
+```{r}
+idx<-fdr.pv<=0.05
+dge.o<-dge.o[idx,,keep.lib.sizes = TRUE]
+log2.fpkm<-log2(dge.o$counts+1)
+```
+
+```{r}
+hist(sort(fdr.pv[idx]),breaks = 5)
+```
+
+```{r}
+tmp<-t(log2.fpkm)
+tmp<-t(scale(tmp,center=T))
+```
+
+
+```{r}
+pca.o<-prcomp(t(tmp))
+dat.loadings<-pca.o$x[,1:2]
+plot(dat.loadings[,1],dat.loadings[,2],xlab="pc1",ylab="pc2",col=dge.o$samples$group)
+```
+```{r}
+dat.pca.var <- round(pca.o$sdev^2 / sum(pca.o$sdev^2)*100,2)
+plot(c(1:length(dat.pca.var)),dat.pca.var,type="b",xlab="# components",ylab="% variance",pch=21,col=1,bg=3,cex=1.5)
+title("Scree plot showing % variability explained by each eigenvalue\nKIU/OXF dataset")
+```
+
